@@ -11,15 +11,10 @@ Features
     Automated Downloads: 
 		Download and extract result ZIP files directly.
 	
-Result Visualization
-	View extracted parameters from JSON files.
-        Automatically locate and open All.pdf files.
-Folder Management
-	Open or clean up the downloaded results folder.
-Responsive UI 
-	Utilizes threading for non-blocking operations.
-Cross-Platform Support: 
-		Compatible with Windows, macOS, and Linux.  
+Result Visualization: View extracted parameters from JSON files. Automatically locate and open All.pdf files.
+Folder Management: Open or clean up the downloaded results folder.
+Responsive UI: Utilizes threading for non-blocking operations.
+Cross-Platform Support: Compatible with Windows, macOS, and Linux.  
 
 Prerequisites
 Before running PyOFE-API, ensure you have the following installed:
