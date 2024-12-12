@@ -1,28 +1,6 @@
-# PyOFE-API
-PyOFE-API (OneFit-Engine API) is a Python-based graphical user interface (GUI) application that simplifies the process for data fitting, downloading results, and displaying processed outputs. It is particularly tailored for researchers working with .hdf5 files in the context of NMR relaxometry and similar analyses.
+PyOFE-API: OneFit-Engine API
+PyOFE-API is a Python-based graphical user interface (GUI) application designed to streamline data fitting, result downloading, and processed output visualization. Tailored for researchers working with .hdf5 files in NMR relaxometry and similar analyses, it simplifies workflows by allowing file selection, server configuration, and function definition for data processing. Users can download and extract ZIP result files, view extracted parameters from JSON files, and automatically open All.pdf files. The application also provides options to open or clean the results folder for better management.
 
-Features: Select .hdf5 files for processing. Choose between university and local server URLs. Input or select pre-defined monoexponential or biexponential functions. Download and extract result ZIP files directly.
-	
-Result Visualization: View extracted parameters from JSON files. Automatically locate and open All.pdf files.
-Folder Management: Open or clean up the downloaded results folder.
-Responsive UI: Utilizes threading for non-blocking operations.
-Cross-Platform Support: Compatible with Windows, macOS, and Linux.  
+Built with a responsive UI utilizing threading for smooth operations, PyOFE-API is cross-platform and compatible with Windows, macOS, and Linux systems. Before running the application, ensure Python 3.8+ is installed along with the required Python libraries (requests and tkinter) using pip.
 
-Prerequisites
-Before running PyOFE-API, ensure you have the following installed:
-Python 3.8+
-Required Python libraries:
-pip install requests tkinter
-
-Use the GUI to: Select an .hdf5 file. Choose server settings and function definitions. Execute the process using the Run button.
-
-View results:Open the downloaded folder. Display All.pdf or explore parameters extracted from the JSON file.
-
-This project is licensed under the MIT License. See the LICENSE file for details.
-
-Contact
-For any questions or feedback, please contact:
-
-Muhammad Muntazir Mehdi
-
-Email: muhammad.muntazir.mehdi@tecnico.ulisboa.pt
+This project is licensed under the MIT License. For details, see the LICENSE file in the repository. For questions or feedback, contact Muhammad Muntazir Mehdi at muhammad.muntazir.mehdi@tecnico.ulisboa.pt.
