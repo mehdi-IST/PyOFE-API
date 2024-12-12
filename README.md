@@ -27,19 +27,13 @@ Python 3.8+
 Required Python libraries:
 pip install requests tkinter
 
-Use the GUI to:
-Select an .hdf5 file.
-Choose server settings and function definitions.
-Execute the process using the Run button.
+Use the GUI to: Select an .hdf5 file. Choose server settings and function definitions. Execute the process using the Run button.
 
-View results:
-Open the downloaded folder.
-Display All.pdf or explore parameters extracted from the JSON file.
+View results:Open the downloaded folder. Display All.pdf or explore parameters extracted from the JSON file.
 
-License
 This project is licensed under the MIT License. See the LICENSE file for details.
 
-##Contact
+Contact
 For any questions or feedback, please contact:
 
 Muhammad Muntazir Mehdi
