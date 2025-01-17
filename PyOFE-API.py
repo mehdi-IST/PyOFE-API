@@ -6,7 +6,7 @@ import zipfile
 import json
 import subprocess
 import platform
-
+import h5py
 # Third-party libraries
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -17,9 +17,30 @@ import requests
 UNIVERSITY_URL = "http://onefite-t.vps.tecnico.ulisboa.pt:8142/fit"
 LOCAL_URL = "http://localhost:8142/fit/muhammad"
 
-# Default FUNCTIONS
+FUNCTIONS_JSON_PATH = "functions.json"
+# Default functions
 MONOEXP = r"Mz(t,Mi[0<1.5],M0[0<1.5],T11[0.0001<5])[-1.2<1.2]=Mi \+ (M0-Mi)*exp(-t/T11)"
 BIEXP = r"Mz(t,Mi[0<1.5],M0[0<1.5],T11[0.0001<5],T12[0.0001<5],c=1[0.5<1])[-1.2<1.2]=Mi \+ c*(M0-Mi)*exp(-t/T11) \+(1-c)*(M0-Mi)*exp(-t/T12)"
+
+# Confirm that JSON file with functions is generated if missing
+if not os.path.exists(FUNCTIONS_JSON_PATH):
+    default_functions = {
+        "functions": {
+            "Monoexponential": MONOEXP,
+            "Biexponential": BIEXP
+        }
+    }
+    with open(FUNCTIONS_JSON_PATH, "w") as json_file:
+        json.dump(default_functions, json_file, indent=4)
+# Function to load functions from JSON file
+def load_functions_from_json():
+    with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+        data = json.load(json_file)
+    return data["functions"]
+# Load functions from JSON file
+functions = load_functions_from_json()
+
+
 
 def query(url, file_path, params, download_folder):
     try:
@@ -66,52 +87,48 @@ def run_curl():
     def execute_curl():
         start_blinking()
 
-        # Get user inputs
-        file_path = file_entry.get()
-        stelar_hdf5 = stelar_var.get()
-        function = function_entry.get()
-        logx = logx_var.get()
-        autox = autox_var.get()
-        server_url = url_entry.get()
-        download_folder = "downloaded"
+    # Get user inputs
+    file_path = file_entry.get()
+    function = function_entry.get()
+    logx = logx_var.get()
+    autox = autox_var.get()
+    server_url = url_entry.get()
+    download_folder = "downloaded"
 
-        # Validate inputs
-        if not os.path.isfile(file_path):
-            stop_blinking()
-            result_text.delete(1.0, tk.END)  # Clear previous content
-            result_text.insert(tk.END, "Error: Please select a valid .hdf5 file.\n")  # Display error in result_text
-            return
-        if not server_url:
-            stop_blinking()
-            result_text.delete(1.0, tk.END)  # Clear previous content
-            result_text.insert(tk.END, "Error: Server URL is required.\n")  # Display error in result_text
-            return
-        if not function:
-            stop_blinking()
-            result_text.delete(1.0, tk.END)  # Clear previous content
-            result_text.insert(tk.END, "Error: Function definition is required.\n")  # Display error in result_text
-            return
+    # Validate inputs
+    if not os.path.isfile(file_path):
+        stop_blinking()
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "Error: Please select a valid .hdf5 file.\n")
+        return
+    if not server_url:
+        stop_blinking()
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "Error: Server URL is required.\n")
+        return
+    if not function:
+        stop_blinking()
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "Error: Function definition is required.\n")
+        return
 
-        # Prepare the request payload
-        params = {
-            "stelar-hdf5": stelar_hdf5,
-            "function": function,
-            "logx": logx,
-            "autox": autox,
-            "download": "zip"
-        }
+    # Prepare the request payload with automatic stelar-hdf5 detection
+    params = {
+        "stelar-hdf5": "yes" if is_hdf5_file(file_path) else "no",
+        "function": function,
+        "logx": logx,
+        "autox": autox,
+        "download": "zip"
+    }
 
-        # Call the query function
-        try:
-            query(server_url, file_path, params, download_folder)
-            stop_blinking()
-
-        except Exception as e:
-            stop_blinking()
-            result_text.delete(1.0, tk.END)  # Clear previous content
-            result_text.insert(tk.END, f"Error: {e}\n")  # Display error in result_text
-
-    threading.Thread(target=execute_curl, daemon=True).start()
+    # Call the query function
+    try:
+        query(server_url, file_path, params, download_folder)
+        stop_blinking()
+    except Exception as e:
+        stop_blinking()
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Error: {e}\n")
 
 
 def open_folder(download_folder):
@@ -287,10 +304,24 @@ def clean_folder():
     else:
         result_text.insert(tk.END, f"{folder_to_remove} does not exist.\n")
 
+
+def insert_function(event):
+    selected_function = function_var.get()
+    if selected_function in functions:
+        function_entry.delete(0, tk.END)
+        function_entry.insert(tk.END, functions[selected_function])
+
+def is_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except Exception:
+        return False
+
 # Create the main application window
 root = tk.Tk()
 root.title("OneFit Interface")
-root.geometry("1105x585")
+root.geometry("1150x600")
 
 # Styling
 style = ttk.Style()
@@ -305,24 +336,19 @@ file_entry.grid(row=0, column=1, padx=2, pady=5, sticky="ew")
 browse_button = tk.Button(root, text="Browse", command=browse_file, fg="red", bg="white", font=("Arial", 8))
 browse_button.grid(row=0, column=2, padx=2, pady=5, sticky="w")
 
-# Stelar-HDF5, Logx, and Autox options
+#Logx, and Autox options
 options_frame = tk.Frame(root)
 options_frame.grid(row=1, column=0, columnspan=6, pady=10, sticky="ew")
 
-tk.Label(options_frame, text="Stelar-HDF5:", font=("Arial", 11)).grid(row=0, column=0, padx=10, sticky="e")
-stelar_var = tk.StringVar(value="yes")
-stelar_dropdown = ttk.Combobox(options_frame, textvariable=stelar_var, values=["yes", "no"], state="readonly", width=10)
-stelar_dropdown.grid(row=0, column=1, padx=5, sticky="w")
-
-tk.Label(options_frame, text="Logx:", font=("Arial", 11)).grid(row=0, column=2, padx=10, sticky="e")
+tk.Label(options_frame, text="Logx:", font=("Arial", 11)).grid(row=0, column=0, padx=10, sticky="e")
 logx_var = tk.StringVar(value="yes")
 logx_dropdown = ttk.Combobox(options_frame, textvariable=logx_var, values=["yes", "no"], state="readonly", width=10)
-logx_dropdown.grid(row=0, column=3, padx=5, sticky="w")
+logx_dropdown.grid(row=0, column=1, padx=5, sticky="w")
 
-tk.Label(options_frame, text="Autox:", font=("Arial", 11)).grid(row=0, column=4, padx=10, sticky="e")
+tk.Label(options_frame, text="Autox:", font=("Arial", 11)).grid(row=0, column=2, padx=10, sticky="e")
 autox_var = tk.StringVar(value="yes")
 autox_dropdown = ttk.Combobox(options_frame, textvariable=autox_var, values=["yes", "no"], state="readonly", width=10)
-autox_dropdown.grid(row=0, column=5, padx=5, sticky="w")
+autox_dropdown.grid(row=0, column=3, padx=5, sticky="w")
 
 # Function definition
 tk.Label(root, text="Function:", font=("Arial", 11)).grid(row=2, column=0, padx=2, pady=2, sticky="e")
@@ -331,10 +357,14 @@ function_entry.grid(row=2, column=1, padx=2, pady=2, sticky="w")
 
 # Function dropdown
 tk.Label(root, text="Select Function:", font=("Arial", 11)).grid(row=2, column=2, padx=2, pady=2, sticky="e")
-function_var = tk.StringVar(value="Select Function")
-function_dropdown = ttk.Combobox(root, textvariable=function_var, values=["Monoexponential", "Biexponential"], state="readonly", width=15)
-function_dropdown.grid(row=2, column=3, padx=2, pady=2, sticky="w")
-function_dropdown.bind("<<ComboboxSelected>>", insert_function)
+# Load functions from JSON file
+with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+    functions_data = json.load(json_file)  # Load all functions from the JSON
+
+function_var = tk.StringVar()
+function_combobox = ttk.Combobox(root, textvariable=function_var, values=list(functions_data["functions"].keys()), state="readonly", width=20)
+function_combobox.grid(row=2, column=3, padx=2, pady=2, sticky="w")
+function_combobox.bind("<<ComboboxSelected>>", insert_function)
 
 # Server URL
 tk.Label(root, text="OneFit-Engine URL:", font=("Arial", 11)).grid(row=3, column=0, padx=2, pady=5, sticky="e")
@@ -377,7 +407,6 @@ url_dropdown.grid(row=3, column=3, padx=2, pady=5, sticky="w")
 
 # Bind the selection event to update the URL entry field
 url_dropdown.bind("<<ComboboxSelected>>", set_url)
-
 #________________________________________________________________________________________________________
 
 # Define a consistent button style for all buttons
