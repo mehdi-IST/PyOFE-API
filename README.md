@@ -1,4 +1,4 @@
-# PyOFE-API 
+# PyOFE-API 0.1.0 
 
 PyOFE-API is a Python-based graphical user interface (GUI) application designed to streamline data fitting, result downloading, and processed output visualization. Tailored for researchers working with .hdf5 files in NMR relaxometry and similar analyses, it simplifies workflows by allowing file selection, server configuration, and function definition for data processing. Users can download and extract ZIP result files, view extracted parameters from JSON files, and automatically open All.pdf files. The application also provides options to open or clean the results folder for better management.
 
