@@ -15,13 +15,12 @@ import requests
 
 
 # Default URLs
-UNIVERSITY_URL = "http://onefite-t.vps.tecnico.ulisboa.pt:8142/fit"
-LOCAL_URL = "http://localhost:8142/fit/muhammad"
+UNIVERSITY_URL = "http://192.92.147.107:8142/fit"
 
 FUNCTIONS_JSON_PATH = "functions.json"
 # Default functions
 MONOEXP = r"Mz(t,Mi[0<1.5],M0[0<1.5],T11[0.0001<5])[-1.2<1.2]=Mi \+ (M0-Mi)*exp(-t/T11)"
-BIEXP = r"Mz(t,Mi[0<1.5],M0[0<1.5],T11[0.0001<5],T12[0.0001<5],c=1[0.5<1])[-1.2<1.2]=Mi \+ c*(M0-Mi)*exp(-t/T11) \+(1-c)*(M0-Mi)*exp(-t/T12)"
+BIEXP = r"Mz(t,Mi[0<1.5],M0[0<1.5],T11[0.0001<5],T12[0.0001<5],c[0.5<1])[-1.2<1.2]=Mi \+ c*(M0-Mi)*exp(-t/T11) \+(1-c)*(M0-Mi)*exp(-t/T12)"
 
 # Confirm that JSON file with functions is generated if missing
 if not os.path.exists(FUNCTIONS_JSON_PATH):
@@ -297,19 +296,20 @@ def use_university_url():
     url_entry.delete(0, tk.END)
     url_entry.insert(0, UNIVERSITY_URL)
 
-def use_local_url():
-    # Set the server URL to the local URL
-    url_entry.delete(0, tk.END)
-    url_entry.insert(0, LOCAL_URL)
-
 def insert_function(event):
+    # Get the selected function name (key) from the dropdown
     selected_function = function_var.get()
-    if selected_function == "Monoexponential":
+
+    # Load the existing functions from the JSON file
+    with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+        functions_data = json.load(json_file)
+
+    # Get the full function definition (value) for the selected function
+    if selected_function in functions_data["functions"]:
+        function_value = functions_data["functions"][selected_function]
+        # Update the function definition entry box with the value
         function_entry.delete(0, tk.END)
-        function_entry.insert(tk.END, MONOEXP)
-    elif selected_function == "Biexponential":
-        function_entry.delete(0, tk.END)
-        function_entry.insert(tk.END, BIEXP)
+        function_entry.insert(tk.END, function_value)
 
 def clean_folder():
     folder_to_remove = "downloaded"  # Always delete the "downloaded" folder
@@ -332,10 +332,19 @@ def clean_folder():
 
 
 def insert_function(event):
+    # Get the selected function name from the dropdown
     selected_function = function_var.get()
-    if selected_function in functions:
+
+    # Load the existing functions from the JSON file
+    with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+        functions_data = json.load(json_file)
+
+    # Get the full function definition for the selected function
+    if selected_function in functions_data["functions"]:
+        function_definition = functions_data["functions"][selected_function]
+        # Update the function definition entry box
         function_entry.delete(0, tk.END)
-        function_entry.insert(tk.END, functions[selected_function])
+        function_entry.insert(tk.END, function_definition)
 
 def is_hdf5_file(file_path):
     try:
@@ -345,19 +354,157 @@ def is_hdf5_file(file_path):
         return False
     except Exception:
         return False
-    
-#__________________________________________________________________________________________________________
+
 # Update the URL entry field when an option is selected
 def set_url(event):
-    selected_url = url_var.get()  # Get selected URL from dropdown
-    if selected_url in urls:
-        url_entry.delete(0, tk.END)  # Clear the entry field
-        url_entry.insert(0, urls[selected_url])  # Insert the selected URL
+    # Get the selected URL key from the dropdown
+    selected_url = url_var.get()
+
+    # Load the existing URLs from the JSON file
+    with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+        functions_data = json.load(json_file)
+
+    # Get the full URL for the selected key
+    if selected_url in functions_data["urls"]:
+        url_value = functions_data["urls"][selected_url]
+        # Update the URL entry box
+        url_entry.delete(0, tk.END)
+        url_entry.insert(tk.END, url_value)  
+#__________________________________________________________________________________________________________
+def list_functions():
+    try:
+        # URL for the /list endpoint
+        url = "http://192.92.147.107:8142/list"
+
+        # Headers to match the curl request
+        headers = {
+            "User-Agent": "curl/7.79.1",  # Example User-Agent from curl
+            "Accept": "*/*"  # Example Accept header from curl
+        }
+
+        # Make the GET request
+        response = requests.get(url, headers=headers)
+
+        # Check if the request was successful
+        if response.status_code == 200:
+            # Clear the result_text widget
+            result_text.delete(1.0, tk.END)
+
+            # Insert the raw response into the result_text widget
+            result_text.insert(tk.END, "Available Functions:\n\n")
+            result_text.insert(tk.END, response.text)  # Display the raw response
+        else:
+            # Show an error message if the request failed
+            result_text.delete(1.0, tk.END)
+            result_text.insert(tk.END, f"Error: Failed to fetch functions. Status code: {response.status_code}\n")
+    except requests.exceptions.RequestException as e:
+        # Show an error message if there was an exception
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Error: An error occurred while fetching functions: {e}\n")
+
+# Function to add a new function to the JSON file
+def add_function():
+    # Get the function definition from the entry box
+    function_definition = function_entry.get().strip()
+
+    # Check if the input is empty
+    if not function_definition:
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "Error: Function definition is required.\n")
+        return
+
+    try:
+        # Extract the function name (key) and value
+        if ":" in function_definition:
+            # If the input contains a colon, split into key and value
+            key_value = function_definition.split(":", 1)  # Split on the first colon only
+            if len(key_value) == 2:
+                function_name = key_value[0].strip()  # Key (function name)
+                function_value = key_value[1].strip()  # Value (function definition)
+            else:
+                # If the input is invalid, treat the entire input as the key and value
+                function_name = function_definition.strip()
+                function_value = function_definition.strip()
+        else:
+            # If there is no colon, treat the entire input as the key and value
+            function_name = function_definition.strip()
+            function_value = function_definition.strip()
+
+        # Load the existing functions from the JSON file
+        with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+            functions_data = json.load(json_file)
+
+        # Add the new function to the list
+        functions_data["functions"][function_name] = function_value
+
+        # Save the updated functions back to the JSON file
+        with open(FUNCTIONS_JSON_PATH, "w") as json_file:
+            json.dump(functions_data, json_file, indent=4)
+
+        # Update the dropdown menu with only the function names (keys)
+        function_combobox["values"] = list(functions_data["functions"].keys())
+
+        # Select the newly added function in the dropdown
+        function_var.set(function_name)
+
+        # Update the function definition entry box with the value (function definition)
+        function_entry.delete(0, tk.END)
+        function_entry.insert(tk.END, function_value)
+
+        # Display a confirmation message
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Function '{function_name}' has been added.\n")
+    except Exception as e:
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Error: Failed to add function. {e}\n")
+
+def add_url():
+    # Get the URL from the entry box
+    new_url = url_entry.get().strip()
+
+    # Check if the input is empty
+    if not new_url:
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "Error: URL is required.\n")
+        return
+
+    try:
+        # Generate a key for the new URL (e.g., "Custom URL 1", "Custom URL 2", etc.)
+        with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+            functions_data = json.load(json_file)
+
+        # Find the next available custom URL key
+        custom_url_count = 1
+        while f"Custom URL {custom_url_count}" in functions_data["urls"]:
+            custom_url_count += 1
+        url_key = f"Custom URL {custom_url_count}"
+
+        # Add the new URL to the list
+        functions_data["urls"][url_key] = new_url
+
+        # Save the updated URLs back to the JSON file
+        with open(FUNCTIONS_JSON_PATH, "w") as json_file:
+            json.dump(functions_data, json_file, indent=4)
+
+        # Update the URL dropdown menu with the new key
+        url_combobox["values"] = list(functions_data["urls"].keys())
+
+        # Select the newly added URL in the dropdown
+        url_var.set(url_key)
+
+        # Display a confirmation message
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"URL '{url_key}' has been added.\n")
+    except Exception as e:
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Error: Failed to add URL. {e}\n")
+
+
 
 # Create the main application window
 root = tk.Tk()
 root.title("OneFit Interface")
-root.geometry("1100x450")
+root.geometry("900x500")
 
 # Styling
 style = ttk.Style()
@@ -409,44 +556,69 @@ symb_size_entry.grid(row=0, column=9, padx=5, sticky="w")
 symb_size_entry.insert(0, "1.0")  # Set default value
 
 # Function 3rd_Frame
+# Update the function frame layout
 function_frame = tk.Frame(root)
 function_frame.grid(row=2, column=0, columnspan=4, sticky="ew")
 function_frame.columnconfigure(1, weight=1)  # Make Entry expand
-# Function Label
-tk.Label(function_frame, text="Function:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=2, sticky="e")
-function_entry = ttk.Entry(function_frame, width=120)
-function_entry.grid(row=0, column=1, padx=2, pady=2, sticky="we")
-# Function Dropdown Label
-tk.Label(function_frame, text="Select Function:", font=("Arial", 11)).grid(row=0, column=2, padx=2, pady=2, sticky="e")
+
+# Row 1: Function Dropdown Label & Combobox
+tk.Label(function_frame, text="Select Function:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=2, sticky="e")
+
 # Load functions from JSON file (ensure the path is correct)
 with open(FUNCTIONS_JSON_PATH, "r") as json_file:
-    functions_data = json.load(json_file)  # Load all functions from the JSON
-# Function Combobox
+    functions_data = json.load(json_file)  # Load all functions from the JSON file
+
+# Function Combobox (dropdown)
 function_var = tk.StringVar()
 function_combobox = ttk.Combobox(function_frame, textvariable=function_var, values=list(functions_data["functions"].keys()), state="readonly", width=20)
-function_combobox.grid(row=0, column=3, padx=2, pady=2, sticky="w")
-function_combobox.bind("<<ComboboxSelected>>", insert_function)
+function_combobox.grid(row=0, column=1, padx=2, pady=2, sticky="w")
+function_combobox.bind("<<ComboboxSelected>>", insert_function)  # Bind the selection event
+
+# Add the "Add Function" button
+add_function_button = ttk.Button(function_frame, text="Add Function", command=add_function, style="TButton")
+add_function_button.grid(row=0, column=2, padx=2, pady=2, sticky="w")
+
+# Add the "List Functions" button
+list_functions_button = ttk.Button(function_frame, text="List Functions", command=list_functions, style="TButton")
+list_functions_button.grid(row=0, column=3, padx=2, pady=2, sticky="w")
+
+# Add the "Add URL" button
+add_url_button = ttk.Button(function_frame, text="Add URL", command=add_url, style="TButton")
+add_url_button.grid(row=0, column=4, padx=2, pady=2, sticky="w")
+
+# Row 2: Function Definition Label & Entry
+tk.Label(function_frame, text="Function:", font=("Arial", 11)).grid(row=1, column=0, padx=2, pady=2, sticky="e")
+function_entry = ttk.Entry(function_frame, width=120)
+function_entry.grid(row=1, column=1, columnspan=4, padx=2, pady=2, sticky="we")
 
 # Server URL 4th_Frame
+# Update the server URL frame layout
 server_url_frame = tk.Frame(root)
 server_url_frame.grid(row=3, column=0, columnspan=4, sticky="ew")
 server_url_frame.columnconfigure(1, weight=1)  # Make Entry expand
-# Server URL Label and Entry
-tk.Label(server_url_frame, text="OneFit-Engine URL:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=5, sticky="e")
+
+# Row 1: URL Dropdown Label & Combobox
+tk.Label(server_url_frame, text="Select URL:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=5, sticky="e")
+
+# URL Combobox (dropdown)
+url_var = tk.StringVar()
+url_combobox = ttk.Combobox(server_url_frame, textvariable=url_var, values=list(functions_data["urls"].keys()), state="readonly", width=20)
+url_combobox.grid(row=0, column=1, padx=2, pady=5, sticky="w")
+url_combobox.bind("<<ComboboxSelected>>", set_url)  # Bind the selection event
+
+# Row 2: Server URL Label & Entry
+tk.Label(server_url_frame, text="OneFit-Engine URL:", font=("Arial", 11)).grid(row=1, column=0, padx=2, pady=5, sticky="e")
+
+# URL Entry Box
 url_entry = ttk.Entry(server_url_frame, width=45)
-url_entry.grid(row=0, column=1, padx=2, pady=5, sticky="w")
-# Set default value for url_var to "University URL" to ensure it’s selected initially
-url_var = tk.StringVar(value=list(urls.keys())[0])  # Default value is the first URL
+url_entry.grid(row=1, column=1, columnspan=3, padx=2, pady=5, sticky="we")
+
 # Set the default value in the URL entry field
 url_entry.insert(0, urls[list(urls.keys())[0]])
-# URL Dropdown-style Button for selecting URL
-tk.Label(server_url_frame, text="Select URL:", font=("Arial", 11)).grid(row=0, column=2, padx=2, pady=5, sticky="e")
-url_dropdown = ttk.Combobox(server_url_frame, textvariable=url_var, values=list(urls.keys()), state="readonly", width=15)
-url_dropdown.grid(row=0, column=3, padx=2, pady=5, sticky="w")
 
-# Bind the selection event to update the URL entry field
-url_dropdown.bind("<<ComboboxSelected>>", set_url)
 
+
+# Buttons and Message 5th-Frame
 # Create a new frame to hold the buttons and the message box
 buttons_message_frame = tk.Frame(root)
 buttons_message_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=10)
@@ -456,8 +628,7 @@ button_style = {
     'font': ("Arial", 9),
     'width': 10,
     'height': 1,
-    'fg': "white",
-    'bg': "blue",
+    'fg': "black",  # Use black text for better visibility on Windows
 }
 
 # Create a frame for the buttons on the left side
@@ -472,14 +643,13 @@ run_button.pack(pady=5)
 show_pdf_button = tk.Button(buttons_frame, text="Show PDF", command=show_pdf, fg="green", bg="white", font=("Arial", 10), width=8, height=1)
 show_pdf_button.pack(pady=5)
 
-# Open Downloaded Folder button
-open_folder_button = tk.Button(buttons_frame, text="Open Folder", command=open_downloaded_folder, **button_style)
+# Open Downloaded Folder button (using ttk.Button for better compatibility)
+open_folder_button = ttk.Button(buttons_frame, text="Open Folder", command=open_downloaded_folder)
 open_folder_button.pack(pady=5)
 
-# Clean button
-clean_button = tk.Button(buttons_frame, text="Clean", command=clean_folder, **button_style)
+# Clean button (using ttk.Button for better compatibility)
+clean_button = ttk.Button(buttons_frame, text="Clean", command=clean_folder)
 clean_button.pack(pady=5)
-
 
 # Ensure that buttons_message_frame is expandable
 buttons_message_frame.grid_rowconfigure(0, weight=1)
