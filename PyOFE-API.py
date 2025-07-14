@@ -12,6 +12,13 @@ import h5py
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import requests
+import re
+import math
+import subprocess
+import tempfile
+from collections import defaultdict
+from decimal import Decimal, ROUND_HALF_UP
+
 
 
 # Default URLs
@@ -92,7 +99,7 @@ def run_curl():
             # Get user inputs
             symb_size = symb_size_entry.get()
             file_path = file_entry.get()
-            function = function_entry.get()
+            function = function_entry.get("1.0", tk.END).strip()
             logx = logx_var.get()
             logy = logy_var.get()
             autox = autox_var.get()
@@ -102,12 +109,12 @@ def run_curl():
 
             # Validate inputs
             if file_path:  # Only validate if a file is selected
-                allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat']
+                allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat', '.sdf']
                 file_extension = os.path.splitext(file_path)[1].lower()
                 if file_extension not in allowed_extensions:
                     stop_blinking()
                     result_text.delete(1.0, tk.END)
-                    result_text.insert(tk.END, "Error: Please select a valid file (.hdf5, .json, .sav, .zip, .dat).\n")
+                    result_text.insert(tk.END, "Error: Please select a valid file (.hdf5, .json, .sav, .zip, .dat, .sdf).\n")
                     return
             if not server_url:
                 stop_blinking()
@@ -232,7 +239,8 @@ def browse_file():
             ("JSON files", "*.json"),
             ("SAV files", "*.sav"),
             ("ZIP files", "*.zip"),
-            ("DAT files", "*.dat")
+            ("DAT files", "*.dat"),
+            ("SDF files", "*.sdf")
         ]
     )
     if file_path:
@@ -282,6 +290,9 @@ def show_fit_result():
                 # Display the formatted data in the result_text widget
                 result_text.delete(1.0, tk.END)  # Clear any previous content
                 result_text.insert(tk.END, display_text)
+                # Save to a .dat file for Gnuplot
+                with open("fit_results.dat", "w") as f:
+                    f.write(cleaned_fit_results)
             else:
                 # Debugging: Display all keys in the JSON
                 all_keys = json_data.keys()
@@ -343,8 +354,8 @@ def insert_function(event):
     if selected_function in functions_data["functions"]:
         function_definition = functions_data["functions"][selected_function]
         # Update the function definition entry box
-        function_entry.delete(0, tk.END)
-        function_entry.insert(tk.END, function_definition)
+        function_entry.delete("1.0", tk.END)
+        function_entry.insert("1.0", function_definition)
 
 def is_hdf5_file(file_path):
     try:
@@ -405,7 +416,8 @@ def list_functions():
 # Function to add a new function to the JSON file
 def add_function():
     # Get the function definition from the entry box
-    function_definition = function_entry.get().strip()
+    function_definition = function_entry.get("1.0", tk.END).strip()
+
 
     # Check if the input is empty
     if not function_definition:
@@ -501,10 +513,142 @@ def add_url():
 
 
 
+
+custom_data_file_path = "custom_plot_data.dat"
+
+def create_custom_data_file(instructions):
+    global custom_data_file_path
+    try:
+        formulas = [line.strip() for line in instructions.split('\n') if line.strip()]
+        if not formulas:
+            messagebox.showerror("Error", "No formulas provided.")
+            return
+
+        if not os.path.exists("fit_results.dat"):
+            messagebox.showerror("Error", "fit_results.dat not found.")
+            return
+
+        with open("fit_results.dat", "r") as f:
+            raw_data = f.read().strip()
+
+        if not raw_data:
+            messagebox.showerror("Error", "fit_results.dat is empty.")
+            return
+
+        # Preprocess formulas: replace $N with vN
+        processed_formulas = [
+            re.sub(r'\$(\d+)', r'v\1', formula) for formula in formulas
+        ]
+
+        evaluated_rows = []
+
+        for line in raw_data.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            cols = [col.strip() for col in line.split(",")]
+
+            safe_dict = {
+                'sqrt': math.sqrt,
+                'log': math.log,
+                'log10': math.log10,
+                'exp': math.exp,
+                'sin': math.sin,
+                'cos': math.cos,
+                'tan': math.tan,
+                'pi': math.pi,
+                'e': math.e
+            }
+
+            for i, col in enumerate(cols, start=1):
+                try:
+                    safe_dict[f'v{i}'] = float(col)
+                except:
+                    safe_dict[f'v{i}'] = 0.0  # fallback for non-numeric
+
+            row_values = []
+            for formula in processed_formulas:
+                try:
+                    val = eval(formula, {"__builtins__": None}, safe_dict)
+                    row_values.append(val)
+                except Exception as e:
+                    messagebox.showerror("Evaluation Error", f"Error in '{formula}': {e}")
+                    return
+
+            evaluated_rows.append(row_values)
+
+        # ✅ Group rows by the first evaluated value (e.g., $5)
+        grouped = defaultdict(list)
+        for row in evaluated_rows:
+            key = row[0]
+            grouped[key].append(row)
+
+        # ✅ Average each group row-wise
+        averaged_rows = []
+        for group in grouped.values():
+            count = len(group)
+            num_cols = len(group[0])
+            avg_row = [
+                sum(row[i] for row in group) / count
+                for i in range(num_cols)
+            ]
+            averaged_rows.append(avg_row)
+
+        # ✅ Write output
+        output_lines = [" ".join(map(str, row)) for row in averaged_rows]
+        with open(custom_data_file_path, 'w') as out:
+            out.write("\n".join(output_lines))
+
+        messagebox.showinfo("Success", f"Custom data file created:\n{custom_data_file_path}")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to process file: {e}")
+
+
+
+def plot_gnuplot():
+    user_input = gnuplot_input.get("1.0", tk.END).strip()
+    if not user_input:
+        messagebox.showerror("Error", "Please enter Gnuplot instructions.")
+        return
+
+    # Replace $data with the actual file path
+    script_content = user_input.replace("$data", custom_data_file_path)
+
+    try:
+        # Write Gnuplot script to a temp file
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".gp") as f:
+            f.write(script_content)
+            script_path = f.name
+
+        # Run the script using Gnuplot
+        subprocess.run(["gnuplot", "-p", script_path])
+    except Exception as e:
+        messagebox.showerror("Error", f"Gnuplot failed: {e}")
+
+
+
+
+
+
+
+
+
+#---------------------------#----------------------------------#---------------------------#-----------------------------#
+
+# Load JSON once before creating GUI
+with open(FUNCTIONS_JSON_PATH, "r") as json_file:
+    functions_data = json.load(json_file)
+
+functions = functions_data["functions"]
+urls = functions_data["urls"]
+
+
 # Create the main application window
 root = tk.Tk()
 root.title("OneFit Interface")
-root.geometry("900x500")
+root.geometry("1100x580")
 
 # Styling
 style = ttk.Style()
@@ -512,171 +656,234 @@ style.configure("TLabel", font=("Arial", 10))
 style.configure("TEntry", font=("Arial", 10))
 style.configure("TCombobox", font=("Arial", 10))
 
-# File selection 1st_frame
+# Allow root's column 0 to expand
+root.columnconfigure(0, weight=1)
+
+# ----------- File selection - full width layout -----------
 file_frame = tk.Frame(root)
-file_frame.grid(row=0, column=0, columnspan=3, sticky="ew")
-file_frame.columnconfigure(1, weight=1)  # Make entry stretch
-# Label
-tk.Label(file_frame, text="Select File:", font=("Arial", 11)).grid(row=0, column=0, padx=0, pady=5, sticky="w")
-# Entry box
-file_entry = ttk.Entry(file_frame, width=40)
-file_entry.grid(row=0, column=1, padx=2, pady=5, sticky="we")
-# Browse button with working command
+file_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5,0))
+
+# Configure frame columns
+file_frame.columnconfigure(0, weight=0)
+file_frame.columnconfigure(1, weight=1)  # Entry expands
+file_frame.columnconfigure(2, weight=0)
+
+tk.Label(file_frame, text="Select File:", font=("Arial", 11)).grid(row=0, column=0, padx=(0, 5), sticky="w")
+file_entry = ttk.Entry(file_frame)
+file_entry.grid(row=0, column=1, padx=2, sticky="ew")
 browse_button = tk.Button(file_frame, text="Browse", fg="red", bg="white", font=("Arial", 8), command=browse_file)
-browse_button.grid(row=0, column=2, padx=2, pady=5, sticky="w")
+browse_button.grid(row=0, column=2, padx=(5, 0), sticky="e")
+#--------------------------------------------------------------------------------------------------------------
 
-# Logx, Logy, Autox, and Autoy options
-# 2nd_Frame
-options_frame = tk.Frame(root)
-options_frame.grid(row=1, column=0, columnspan=6, pady=10, sticky="ew")
-# Logx
-tk.Label(options_frame, text="Logx:", font=("Arial", 11)).grid(row=0, column=0, padx=10, sticky="e")
-logx_var = tk.StringVar(value="yes")
-logx_dropdown = ttk.Combobox(options_frame, textvariable=logx_var, values=["yes", "no"], state="readonly", width=10)
-logx_dropdown.grid(row=0, column=1, padx=5, sticky="w")
-# Logy
-tk.Label(options_frame, text="Logy:", font=("Arial", 11)).grid(row=0, column=2, padx=10, sticky="e")
-logy_var = tk.StringVar(value="yes")
-logy_dropdown = ttk.Combobox(options_frame, textvariable=logy_var, values=["yes", "no"], state="readonly", width=10)
-logy_dropdown.grid(row=0, column=3, padx=5, sticky="w")
-# Autox
-tk.Label(options_frame, text="Autox:", font=("Arial", 11)).grid(row=0, column=4, padx=10, sticky="e")
-autox_var = tk.StringVar(value="yes")
-autox_dropdown = ttk.Combobox(options_frame, textvariable=autox_var, values=["yes", "no"], state="readonly", width=10)
-autox_dropdown.grid(row=0, column=5, padx=5, sticky="w")
-# Autoy
-tk.Label(options_frame, text="Autoy:", font=("Arial", 11)).grid(row=0, column=6, padx=10, sticky="e")
-autoy_var = tk.StringVar(value="yes")
-autoy_dropdown = ttk.Combobox(options_frame, textvariable=autoy_var, values=["yes", "no"], state="readonly", width=10)
-autoy_dropdown.grid(row=0, column=7, padx=5, sticky="w")
-# SymbSize
-tk.Label(options_frame, text="SymbSize:", font=("Arial", 11)).grid(row=0, column=8, padx=10, sticky="e")
-symb_size_entry = ttk.Entry(options_frame, width=10)
-symb_size_entry.grid(row=0, column=9, padx=5, sticky="w")
-symb_size_entry.insert(0, "1.0")  # Set default value
-
-# Function 3rd_Frame
-# Update the function frame layout
-function_frame = tk.Frame(root)
-function_frame.grid(row=2, column=0, columnspan=4, sticky="ew")
-function_frame.columnconfigure(1, weight=1)  # Make Entry expand
-
-# Row 1: Function Dropdown Label & Combobox
-tk.Label(function_frame, text="Select Function:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=2, sticky="e")
-
-# Load functions from JSON file (ensure the path is correct)
-with open(FUNCTIONS_JSON_PATH, "r") as json_file:
-    functions_data = json.load(json_file)  # Load all functions from the JSON file
-
-# Function Combobox (dropdown)
-function_var = tk.StringVar()
-function_combobox = ttk.Combobox(function_frame, textvariable=function_var, values=list(functions_data["functions"].keys()), state="readonly", width=20)
-function_combobox.grid(row=0, column=1, padx=2, pady=2, sticky="w")
-function_combobox.bind("<<ComboboxSelected>>", insert_function)  # Bind the selection event
-
-# Add the "Add Function" button
-add_function_button = ttk.Button(function_frame, text="Add Function", command=add_function, style="TButton")
-add_function_button.grid(row=0, column=2, padx=2, pady=2, sticky="w")
-
-# Add the "List Functions" button
-list_functions_button = ttk.Button(function_frame, text="List Functions", command=list_functions, style="TButton")
-list_functions_button.grid(row=0, column=3, padx=2, pady=2, sticky="w")
-
-# Add the "Add URL" button
-add_url_button = ttk.Button(function_frame, text="Add URL", command=add_url, style="TButton")
-add_url_button.grid(row=0, column=4, padx=2, pady=2, sticky="w")
-
-# Row 2: Function Definition Label & Entry
-tk.Label(function_frame, text="Function:", font=("Arial", 11)).grid(row=1, column=0, padx=2, pady=2, sticky="e")
-function_entry = ttk.Entry(function_frame, width=120)
-function_entry.grid(row=1, column=1, columnspan=4, padx=2, pady=2, sticky="we")
-
-# Server URL 4th_Frame
-# Update the server URL frame layout
+# --- Server URL 3rd_Frame with Add URL button in one line ---
 server_url_frame = tk.Frame(root)
-server_url_frame.grid(row=3, column=0, columnspan=4, sticky="ew")
-server_url_frame.columnconfigure(1, weight=1)  # Make Entry expand
+server_url_frame.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(5,0))
 
-# Row 1: URL Dropdown Label & Combobox
+# Configure columns for layout
+server_url_frame.columnconfigure(1, weight=0)  # Combobox small
+server_url_frame.columnconfigure(3, weight=1)  # Entry expands but limited width
+server_url_frame.columnconfigure(4, weight=0)  # Button fixed size
+
+# Select URL Label + Combobox (small width)
 tk.Label(server_url_frame, text="Select URL:", font=("Arial", 11)).grid(row=0, column=0, padx=2, pady=5, sticky="e")
-
-# URL Combobox (dropdown)
 url_var = tk.StringVar()
-url_combobox = ttk.Combobox(server_url_frame, textvariable=url_var, values=list(functions_data["urls"].keys()), state="readonly", width=20)
+url_combobox = ttk.Combobox(server_url_frame, textvariable=url_var, 
+                            values=list(functions_data["urls"].keys()), state="readonly", width=20)
 url_combobox.grid(row=0, column=1, padx=2, pady=5, sticky="w")
-url_combobox.bind("<<ComboboxSelected>>", set_url)  # Bind the selection event
+url_combobox.bind("<<ComboboxSelected>>", set_url)
 
-# Row 2: Server URL Label & Entry
-tk.Label(server_url_frame, text="OneFit-Engine URL:", font=("Arial", 11)).grid(row=1, column=0, padx=2, pady=5, sticky="e")
-
-# URL Entry Box
-url_entry = ttk.Entry(server_url_frame, width=45)
-url_entry.grid(row=1, column=1, columnspan=3, padx=2, pady=5, sticky="we")
-
-# Set the default value in the URL entry field
+# OneFit-Engine URL Label + Entry (smaller width)
+tk.Label(server_url_frame, text="OneFit-Engine URL:", font=("Arial", 11)).grid(row=0, column=2, padx=10, pady=5, sticky="e")
+url_entry = ttk.Entry(server_url_frame, width=40)  # Reduced width
+url_entry.grid(row=0, column=3, padx=2, pady=5, sticky="we")
 url_entry.insert(0, urls[list(urls.keys())[0]])
 
+# Add URL Button (placed at end of the line)
+add_url_button = ttk.Button(server_url_frame, text="Add URL", command=add_url, style="TButton")
+add_url_button.grid(row=0, column=4, padx=(10, 2), pady=5, sticky="w")
+
+#--------------------------------------------------------------------------------------------------------------
 
 
-# Buttons and Message 5th-Frame
-# Create a new frame to hold the buttons and the message box
+# --- Combined Function + Options Frame (Two Rows) ---
+combined_frame = tk.Frame(root)
+combined_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(5,0))
+combined_frame.columnconfigure(0, weight=1)
+
+# === First Line (Full width layout) ===
+top_line_frame = tk.Frame(combined_frame)
+top_line_frame.grid(row=0, column=0, sticky="ew")
+top_line_frame.columnconfigure(0, weight=1)
+top_line_frame.columnconfigure(1, weight=0)
+
+# Left and middle options grouped
+left_mid_frame = tk.Frame(top_line_frame)
+left_mid_frame.grid(row=0, column=0, sticky="w")
+
+tk.Label(left_mid_frame, text="Select Function:", font=("Arial", 11)).pack(side="left", padx=5)
+
+function_var = tk.StringVar()
+function_combobox = ttk.Combobox(left_mid_frame, textvariable=function_var,
+                                 values=list(functions_data["functions"].keys()),
+                                 state="readonly", width=25)
+function_combobox.pack(side="left", padx=5)
+function_combobox.bind("<<ComboboxSelected>>", insert_function)
+
+# Options
+def add_option(label_text, var):
+    tk.Label(left_mid_frame, text=label_text, font=("Arial", 11)).pack(side="left", padx=(10, 2))
+    ttk.Combobox(left_mid_frame, textvariable=var, values=["yes", "no"],
+                 state="readonly", width=5).pack(side="left", padx=2)
+
+logx_var = tk.StringVar(value="yes")
+logy_var = tk.StringVar(value="yes")
+autox_var = tk.StringVar(value="yes")
+autoy_var = tk.StringVar(value="yes")
+
+add_option("Logx:", logx_var)
+add_option("Logy:", logy_var)
+add_option("Autox:", autox_var)
+add_option("Autoy:", autoy_var)
+
+# SymbSize
+tk.Label(left_mid_frame, text="SymbSize:", font=("Arial", 11)).pack(side="left", padx=(10, 2))
+symb_size_entry = ttk.Entry(left_mid_frame, width=5)
+symb_size_entry.pack(side="left", padx=2)
+symb_size_entry.insert(0, "1.0")
+
+# === Second Line: Function Entry (Label + Entry in one frame, Buttons in another frame) ===
+
+# Frame 1: Label + Entry Box
+function_entry_frame = tk.Frame(combined_frame)
+function_entry_frame.grid(row=1, column=0, sticky="w", padx=5, pady=2)
+
+tk.Label(function_entry_frame, text="Function:", font=("Arial", 11)).grid(row=0, column=0, padx=5, pady=2, sticky="nw")
+
+function_entry = tk.Text(function_entry_frame, height=3, width=128, wrap=tk.WORD, font=("Arial", 10))
+function_entry.grid(row=0, column=1, padx=5, pady=2, sticky="w")
+
+# Frame 2: Buttons stacked vertically
+function_button_frame = tk.Frame(combined_frame)
+function_button_frame.grid(row=1, column=1, sticky="nw", padx=(0, 10))  # Align right side of entry box
+
+add_function_button = ttk.Button(function_button_frame, text="Add Function", command=add_function)
+add_function_button.pack(side="top", pady=(0, 2))
+
+list_functions_button = ttk.Button(function_button_frame, text="List Functions", command=list_functions)
+list_functions_button.pack(side="top", pady=(0, 2))
+
+
+# === Result Message Area + Buttons in One Line ===
 buttons_message_frame = tk.Frame(root)
-buttons_message_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=10)
+buttons_message_frame.grid(row=5, column=0, columnspan=4, sticky="ew", padx=10, pady=10)
+buttons_message_frame.columnconfigure(0, weight=1)  # Text expands
+buttons_message_frame.columnconfigure(1, weight=0)
 
-# Define a consistent button style for all buttons
+
+# ====== Message Text Area (Left) ======
+result_frame = tk.Frame(buttons_message_frame)
+result_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+result_frame.grid_rowconfigure(0, weight=1)
+result_frame.grid_columnconfigure(0, weight=1)
+
+result_text = tk.Text(result_frame, height=9, wrap=tk.NONE, font=("Arial", 10))
+result_text.grid(row=0, column=0, sticky="nsew")
+
+v_scrollbar = tk.Scrollbar(result_frame, orient=tk.VERTICAL, command=result_text.yview, width=15)
+v_scrollbar.grid(row=0, column=1, sticky="ns")
+
+h_scrollbar = tk.Scrollbar(result_frame, orient=tk.HORIZONTAL, command=result_text.xview, width=15)
+h_scrollbar.grid(row=1, column=0, sticky="ew")
+
+result_text.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+
+# ====== Buttons (Right side, stacked) ======
+buttons_frame = tk.Frame(buttons_message_frame)
+buttons_frame.grid(row=0, column=1, sticky="n")
+
 button_style = {
     'font': ("Arial", 9),
     'width': 10,
     'height': 1,
-    'fg': "black",  # Use black text for better visibility on Windows
+    'fg': "black",
 }
 
-# Create a frame for the buttons on the left side
-buttons_frame = tk.Frame(buttons_message_frame)
-buttons_frame.grid(row=0, column=0, sticky="w")
-
-# Run button
-run_button = tk.Button(buttons_frame, text="Fit", command=run_curl, fg="red", bg="white", font=("Arial", 10, "bold"), width=8, height=1)
+run_button = tk.Button(buttons_frame, text="Fit", command=run_curl, bg="white", **button_style)
 run_button.pack(pady=5)
 
-# Show PDF button
-show_pdf_button = tk.Button(buttons_frame, text="Show PDF", command=show_pdf, fg="green", bg="white", font=("Arial", 10), width=8, height=1)
+show_pdf_button = tk.Button(buttons_frame, text="Show PDF", command=show_pdf, bg="white", **button_style)
 show_pdf_button.pack(pady=5)
 
-# Open Downloaded Folder button (using ttk.Button for better compatibility)
-open_folder_button = ttk.Button(buttons_frame, text="Open Folder", command=open_downloaded_folder)
+open_folder_button = tk.Button(buttons_frame, text="Open Folder", command=open_downloaded_folder, bg="white", **button_style)
 open_folder_button.pack(pady=5)
 
-# Clean button (using ttk.Button for better compatibility)
-clean_button = ttk.Button(buttons_frame, text="Clean", command=clean_folder)
+clean_button = tk.Button(buttons_frame, text="Clean", command=clean_folder, bg="white", **button_style)
 clean_button.pack(pady=5)
 
-# Ensure that buttons_message_frame is expandable
-buttons_message_frame.grid_rowconfigure(0, weight=1)
-buttons_message_frame.grid_columnconfigure(1, weight=1)
 
-# Create a Frame to hold the Text widget and both Scrollbars
-result_frame = tk.Frame(buttons_message_frame)
-result_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
-# Configure grid expansion for result_frame
-result_frame.grid_rowconfigure(0, weight=1)
-result_frame.grid_columnconfigure(0, weight=1)
+# === Combined Frame for Create Gnuplot Data + Gnuplot Plotting ===
+gnuplot_combined_frame = tk.Frame(root)
+gnuplot_combined_frame.grid(row=9, column=0, columnspan=4, sticky="we", padx=10, pady=5)
+gnuplot_combined_frame.columnconfigure(0, weight=1)  # Left 1/4
+gnuplot_combined_frame.columnconfigure(1, weight=3)  # Right 3/4
 
-# Create the Text widget with no word wrapping
-result_text = tk.Text(result_frame, height=15, width=50, wrap=tk.NONE, font=("Arial", 10))
-result_text.grid(row=0, column=0, sticky="nsew")
+# === Create Gnuplot Data Section (Left 1/4) ===
+process_frame = tk.Frame(gnuplot_combined_frame, padx=5, pady=5, bd=1, relief="groove")
+process_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+process_frame.columnconfigure(0, weight=1)
 
-# Create a Vertical Scrollbar (Up & Down) with increased width
-v_scrollbar = tk.Scrollbar(result_frame, orient=tk.VERTICAL, command=result_text.yview, width=20)
-v_scrollbar.grid(row=0, column=1, sticky="ns")
+title_button = tk.Button(
+    process_frame, text="FILTER RESULTS",
+    font=("Arial", 9, "bold"),
+    fg="black", bg="white",
+    relief="flat", bd=0,
+    activebackground="white", activeforeground="blue",
+    cursor="hand2",
+    command=lambda: create_custom_data_file(process_text.get("1.0", tk.END))
+)
+title_button.grid(row=0, column=0, pady=(0, 2), sticky="n")
 
-# Create a Horizontal Scrollbar (Left & Right) with increased height
-h_scrollbar = tk.Scrollbar(result_frame, orient=tk.HORIZONTAL, command=result_text.xview, width=20)
-h_scrollbar.grid(row=1, column=0, sticky="ew")
+tk.Label(process_frame, text="Enter column formulas (use $1, $2,...):", font=("Arial", 9)).grid(
+    row=1, column=0, sticky="w", padx=5, pady=(2, 0)
+)
 
-# Link both Scrollbars to the Text widget
-result_text.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+process_text = tk.Text(process_frame, height=4, width=30, font=("Arial", 9))
+process_text.insert(tk.END, "$5\n$10\n$11*sqrt($3)\n1/$10\n$11*sqrt($3/($10*$10))")
+process_text.grid(row=2, column=0, padx=5, pady=5, sticky="we")
+
+# === Gnuplot Plotting Section (Right 3/4) ===
+plot_frame = tk.Frame(gnuplot_combined_frame, padx=5, pady=5, bd=1, relief="groove")
+plot_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+plot_frame.columnconfigure(0, weight=1)
+
+plot_title_button = tk.Button(
+    plot_frame, text="GNUPLOT PLOTTING",
+    font=("Arial", 9, "bold"),
+    fg="black", bg="white",
+    relief="flat", bd=0,
+    activebackground="white", activeforeground="blue",
+    cursor="hand2",
+    command=plot_gnuplot
+)
+plot_title_button.grid(row=0, column=0, pady=(0, 2), sticky="n")
+
+tk.Label(plot_frame, text="Enter Gnuplot instructions (use $data for filename):", font=("Arial", 9)).grid(
+    row=1, column=0, sticky="w", padx=5, pady=(0, 5)
+)
+
+gnuplot_input = tk.Text(plot_frame, height=8, width=60, font=("Courier", 10))
+gnuplot_input.insert(tk.END,
+"""set logscale xy
+set xrange [1e3:1e9]
+set yrange [0.1:10]
+plot '$data' using 1:2:3 with yerrorlines pt 2 title 'T1', \\
+     '$data' using 1:4:5 with yerrorlines pt 6 title 'R1'
+""")
+gnuplot_input.grid(row=2, column=0, sticky="we", padx=5, pady=5)
+
+
+
 
 # Start the Tkinter event loop
 root.mainloop()
