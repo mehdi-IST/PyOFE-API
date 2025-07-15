@@ -259,48 +259,45 @@ def show_fit_result():
     # Search for the first JSON file in the subfolders
     for root, dirs, files in os.walk(download_folder):
         for file in files:
-            if file.endswith(".json"):  # Check for .json files
-                json_file = os.path.join(root, file)  # Get the full path of the file
-                break  # Stop after finding the first JSON file
+            if file.endswith(".json"):
+                json_file = os.path.join(root, file)
+                break
         if json_file:
             break
 
     if json_file:
         try:
-            # Open the found JSON file
             with open(json_file, 'r') as f:
                 json_data = json.load(f)
 
-            # Check for the presence of 'fit-results' in the JSON file
             fit_results = json_data.get('fit-results')
             if fit_results:
-                # Clean the 'fit-results' string to remove '|' symbols and replace with tab
                 cleaned_fit_results = clean_fit_results(fit_results)
 
-                # Parse the cleaned 'fit-results' string (CSV-like data)
                 rows = cleaned_fit_results.strip().split("\n")
-                header = rows[0].split("\t")  # Split by tab
-                data_rows = [row.split("\t") for row in rows[1:]]  # Split data by tab
+                header = rows[0].split("\t")
+                data_rows = [row.split("\t") for row in rows[1:]]
 
-                # Format the parsed data for display
-                display_text = f"Headers:\n{'\t'.join(header)}\n\n"  # Join with tabs
+                # ✅ FIX HERE
+                header_line = '\t'.join(header)
+                display_text = f"Headers:\n{header_line}\n\n"
                 for row in data_rows:
-                    display_text += f"{'\t'.join(row)}\n"  # Join each row with tabs
+                    display_text += '\t'.join(row) + "\n"
 
-                # Display the formatted data in the result_text widget
-                result_text.delete(1.0, tk.END)  # Clear any previous content
+                result_text.delete(1.0, tk.END)
                 result_text.insert(tk.END, display_text)
-                # Save to a .dat file for Gnuplot
+
                 with open("fit_results.dat", "w") as f:
                     f.write(cleaned_fit_results)
             else:
-                # Debugging: Display all keys in the JSON
                 all_keys = json_data.keys()
                 messagebox.showinfo("Debug Info", f"'fit-results' key not found. Available keys: {list(all_keys)}")
         except Exception as e:
             messagebox.showerror("Error", f"Error reading or parsing the JSON file: {e}")
     else:
         messagebox.showerror("Error", "No JSON file found in the downloaded folder or its subfolders.")
+
+
 
 def use_university_url():
     # Set the server URL to the university URL
