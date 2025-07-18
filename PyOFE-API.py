@@ -102,65 +102,98 @@ def query(url, file_path, params, download_folder):
         result_text.delete(1.0, tk.END)  # Clear any previous content
         result_text.insert(tk.END, f"Error: {e}\n")  # Display the error in result_text
         print(f"Error in query function: {e}")
-        
+
+
+
+
+
+
+
 def run_curl():
     def execute_curl():
         start_blinking()
+        temp_zip_path = None
+        temp_dir = None
         try:
-            # Get user inputs
             symb_size = symb_size_entry.get()
-            file_path = file_entry.get()
-            function = function_entry.get("1.0", tk.END).strip()
-            logx = logx_var.get()
-            logy = logy_var.get()
-            autox = autox_var.get()
-            autoy = autoy_var.get()
-            server_url = url_entry.get()
-            download_folder = "downloaded"
 
-            # Validate inputs
-            if file_path:  # Only validate if a file is selected
-                allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat', '.sdf']
-                file_extension = os.path.splitext(file_path)[1].lower()
-                if file_extension not in allowed_extensions:
+            file_paths_str = file_entry.get()
+            file_paths = [fp.strip() for fp in file_paths_str.split(';') if fp.strip()]
+            
+            if not file_paths:
+                stop_blinking()
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, "Error: No file selected.\n")
+                return
+
+            # Validate extensions for all files
+            allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat', '.sdf']
+            for fp in file_paths:
+                ext = os.path.splitext(fp)[1].lower()
+                if ext not in allowed_extensions:
                     stop_blinking()
                     result_text.delete(1.0, tk.END)
-                    result_text.insert(tk.END, "Error: Please select a valid file (.hdf5, .json, .sav, .zip, .dat, .sdf).\n")
+                    result_text.insert(tk.END, f"Error: File '{fp}' has unsupported extension.\n")
                     return
+
+            server_url = url_entry.get()
             if not server_url:
                 stop_blinking()
                 result_text.delete(1.0, tk.END)
                 result_text.insert(tk.END, "Error: Server URL is required.\n")
                 return
 
-            # Prepare the request payload
+            # Prepare parameters
             params = {
-                "stelar-hdf5": "yes" if is_hdf5_file(file_path) else "no",
-                "logx": logx,
-                "logy": logy,
-                "autox": autox,
-                "autoy": autoy,
+                "logx": logx_var.get(),
+                "logy": logy_var.get(),
+                "autox": autox_var.get(),
+                "autoy": autoy_var.get(),
                 "symbsize": symb_size,
                 "download": "zip"
             }
 
-            # Add function parameter only if the file is not JSON or SAV
-            file_extension = os.path.splitext(file_path)[1].lower()
-            if file_extension not in ['.json', '.sav']:
-                if not function:
-                    stop_blinking()
-                    result_text.delete(1.0, tk.END)
-                    result_text.insert(tk.END, "Error: Function definition is required for this file type.\n")
-                    return
-                params["function"] = function  # Add function parameter for non-JSON/SAV files
+            # Handle multiple files
+            if len(file_paths) > 1:
+                # Zip files into temp zip
+                temp_zip_path, temp_dir = create_temp_zip(file_paths)
+                upload_path = temp_zip_path
+                params["stelar-hdf5"] = "no"  # when sending zip, assume no
+                if function_entry.get("1.0", tk.END).strip():
+                    params["function"] = function_entry.get("1.0", tk.END).strip()
+            else:
+                # Single file
+                upload_path = file_paths[0]
+                params["stelar-hdf5"] = "yes" if is_hdf5_file(upload_path) else "no"
+                ext = os.path.splitext(upload_path)[1].lower()
+                if ext not in ['.json', '.sav']:
+                    function = function_entry.get("1.0", tk.END).strip()
+                    if not function:
+                        stop_blinking()
+                        result_text.delete(1.0, tk.END)
+                        result_text.insert(tk.END, "Error: Function definition is required for this file type.\n")
+                        return
+                    params["function"] = function
 
-            # Call the query function
-            query(server_url, file_path, params, download_folder)
+            # Call query with zip or single file
+            query(server_url, upload_path, params, "downloaded")
+
         finally:
             stop_blinking()
+            # Cleanup temp zip and folder
+            if temp_zip_path and os.path.exists(temp_zip_path):
+                os.remove(temp_zip_path)
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
 
-    # Start the fit process in a separate thread to avoid blocking the UI
+    # Run the execute_curl function in a new thread to avoid blocking UI
     threading.Thread(target=execute_curl, daemon=True).start()
+
+
+
+
+
+
 
 def open_folder(download_folder):
     try:
@@ -243,7 +276,7 @@ def show_pdf():
         result_text.insert(tk.END, "Error: All.pdf not found in the downloaded folder.\n")
 
 def browse_file():
-    file_path = filedialog.askopenfilename(
+    file_paths = filedialog.askopenfilenames(
         filetypes=[
             ("All files", "*.*"),
             ("HDF5 files", "*.hdf5"),
@@ -254,9 +287,25 @@ def browse_file():
             ("SDF files", "*.sdf")
         ]
     )
-    if file_path:
+    if file_paths:
+        # Join multiple files with semicolon or comma to show in entry box
         file_entry.delete(0, tk.END)
-        file_entry.insert(0, file_path)
+        file_entry.insert(0, ";".join(file_paths))  # semicolon-separated paths
+
+
+def create_temp_zip(files):
+    temp_dir = tempfile.mkdtemp()
+    temp_zip_path = os.path.join(temp_dir, "upload.zip")
+    with zipfile.ZipFile(temp_zip_path, 'w') as zipf:
+        for file_path in files:
+            arcname = os.path.basename(file_path)  # store just filename in zip
+            zipf.write(file_path, arcname=arcname)
+    return temp_zip_path, temp_dir  # return temp zip and temp dir for cleanup
+
+
+
+
+
 
 def clean_fit_results(fit_results):
     # Replace '| ' with a tab to clean up the data for Excel pasting
