@@ -53,76 +53,101 @@ functions, urls = load_functions_and_urls_from_json()
 
 def query(url, file_path, params, download_folder):
     try:
-        # Upload the file
         with open(file_path, "rb") as file:
             files = {"file": file}
+
+            # Debug info in GUI before request
+            result_text.delete(1.0, tk.END)
+            result_text.insert(tk.END, "Sending request...\n\n")
+            result_text.insert(tk.END, f"URL: {url}\n")
+            result_text.insert(tk.END, f"File: {file_path}\n")
+            result_text.insert(tk.END, "Parameters:\n")
+            for k, v in params.items():
+                result_text.insert(tk.END, f"  {k}: {v}\n")
+
             response = requests.post(url, files=files, data=params)
 
-        # Check for successful response
-        if response.status_code != 200:
-            raise Exception(f"File upload failed: {response.status_code}, {response.text}")
+        # Show raw response for debugging
+        result_text.insert(tk.END, f"\nHTTP Status: {response.status_code}\n")
+        result_text.insert(tk.END, f"Content-Type: {response.headers.get('Content-Type', '')}\n")
 
-        # Validate the content type
+        if response.status_code != 200:
+            error_body = response.text.strip() if response.text else "No server response body."
+            raise Exception(
+                f"File upload failed.\n"
+                f"Status: {response.status_code}\n"
+                f"Server response:\n{error_body}"
+            )
+
         content_type = response.headers.get("Content-Type", "")
         if "application/zip" not in content_type and "application/octet-stream" not in content_type:
-            raise Exception(f"The query to {url} did not return a ZIP file.")
+            raise Exception(
+                f"The query to {url} did not return a ZIP file.\n"
+                f"Returned Content-Type: {content_type}\n"
+                f"Body:\n{response.text[:2000]}"
+            )
 
-        # Extract the ZIP file
         os.makedirs(download_folder, exist_ok=True)
         zip_file_path = os.path.join(download_folder, "downloaded.zip")
-        with open(zip_file_path, 'wb') as f:
+
+        with open(zip_file_path, "wb") as f:
             f.write(response.content)
 
-        print(f"ZIP file downloaded to: {zip_file_path}")
-
-        with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
+        with zipfile.ZipFile(zip_file_path, "r") as zip_file:
             zip_file.extractall(download_folder)
 
-        print(f"ZIP extracted to: {download_folder}")
+        os.remove(zip_file_path)
 
-        # Delete the ZIP file after extraction
-        os.remove(zip_file_path)  # Remove the ZIP file
-        print(f"ZIP file {zip_file_path} deleted.")
-
-        # Automatically show the fit results after extraction
         show_fit_result()
 
     except Exception as e:
-        result_text.delete(1.0, tk.END)  # Clear any previous content
-        result_text.insert(tk.END, f"Error: {e}\n")  # Display the error in result_text
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, f"Error:\n{e}\n")
         print(f"Error in query function: {e}")
+
         
 def run_curl():
     def execute_curl():
         start_blinking()
         try:
             # Get user inputs
-            symb_size = symb_size_entry.get()
-            file_path = file_entry.get()
+            symb_size = symb_size_entry.get().strip()
+            file_path = file_entry.get().strip()
             function = function_entry.get("1.0", tk.END).strip()
             logx = logx_var.get()
             logy = logy_var.get()
             autox = autox_var.get()
             autoy = autoy_var.get()
-            server_url = url_entry.get()
+            server_url = url_entry.get().strip()
             download_folder = "downloaded"
 
-            # Validate inputs
-            if file_path:  # Only validate if a file is selected
-                allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat', '.sdf']
-                file_extension = os.path.splitext(file_path)[1].lower()
-                if file_extension not in allowed_extensions:
-                    stop_blinking()
-                    result_text.delete(1.0, tk.END)
-                    result_text.insert(tk.END, "Error: Please select a valid file (.hdf5, .json, .sav, .zip, .dat, .sdf).\n")
-                    return
+            # Validate file
+            if not file_path:
+                stop_blinking()
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, "Error: Please select a file.\n")
+                return
+
+            allowed_extensions = ['.hdf5', '.5hdf', '.json', '.sav', '.zip', '.dat', '.sdf', '.txt']
+            file_extension = os.path.splitext(file_path)[1].lower()
+
+            if file_extension not in allowed_extensions:
+                stop_blinking()
+                result_text.delete(1.0, tk.END)
+                result_text.insert(
+                    tk.END,
+                    "Error: Please select a valid file (.hdf5, .json, .sav, .zip, .dat, .sdf, .txt).\n"
+                )
+                return
+
+            # Validate URL
             if not server_url:
                 stop_blinking()
                 result_text.delete(1.0, tk.END)
                 result_text.insert(tk.END, "Error: Server URL is required.\n")
                 return
 
-            # Prepare the request payload
+            # Prepare common request params
             params = {
                 "stelar-hdf5": "yes" if is_hdf5_file(file_path) else "no",
                 "logx": logx,
@@ -133,23 +158,50 @@ def run_curl():
                 "download": "zip"
             }
 
-            # Add function parameter only if the file is not JSON or SAV
-            file_extension = os.path.splitext(file_path)[1].lower()
-            if file_extension not in ['.json', '.sav']:
+            # Function handling by file type
+            if file_extension == ".json":
+                result_text.delete(1.0, tk.END)
+                result_text.insert(
+                    tk.END,
+                    "JSON file detected: function will be read by the server from the JSON file itself.\n"
+                )
+
+            elif file_extension == ".sav":
+                result_text.delete(1.0, tk.END)
+                result_text.insert(
+                    tk.END,
+                    "SAV file detected: no separate function parameter sent.\n"
+                )
+
+            else:
                 if not function:
                     stop_blinking()
                     result_text.delete(1.0, tk.END)
-                    result_text.insert(tk.END, "Error: Function definition is required for this file type.\n")
+                    result_text.insert(
+                        tk.END,
+                        "Error: Function definition is required for this file type.\n"
+                    )
                     return
-                params["function"] = function  # Add function parameter for non-JSON/SAV files
 
-            # Call the query function
+                function_for_server = " ".join(
+                    line.strip() for line in function.splitlines() if line.strip()
+                )
+
+                params["function"] = function_for_server
+
+            # Send request
             query(server_url, file_path, params, download_folder)
+
+        except Exception as e:
+            result_text.delete(1.0, tk.END)
+            result_text.insert(tk.END, f"Error:\n{e}\n")
         finally:
             stop_blinking()
 
-    # Start the fit process in a separate thread to avoid blocking the UI
     threading.Thread(target=execute_curl, daemon=True).start()
+
+
+
 
 def open_folder(download_folder):
     try:
@@ -231,6 +283,41 @@ def show_pdf():
         result_text.delete(1.0, tk.END)  # Clear previous content
         result_text.insert(tk.END, "Error: All.pdf not found in the downloaded folder.\n")
 
+def extract_function_from_json_file(json_path):
+    def search_for_function(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if str(key).lower() == "function" and isinstance(value, str):
+                    return value
+                found = search_for_function(value)
+                if found:
+                    return found
+        elif isinstance(obj, list):
+            for item in obj:
+                found = search_for_function(item)
+                if found:
+                    return found
+        return None
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        func = search_for_function(data)
+        if not func:
+            return None
+
+        # Normalize line endings only
+        func = func.replace("\r\n", "\n").strip()
+        return func
+
+    except Exception as e:
+        messagebox.showerror("JSON Error", f"Could not read function from JSON file:\n{e}")
+        return None
+    
+
+
+
 def browse_file():
     file_path = filedialog.askopenfilename(
         filetypes=[
@@ -240,12 +327,30 @@ def browse_file():
             ("SAV files", "*.sav"),
             ("ZIP files", "*.zip"),
             ("DAT files", "*.dat"),
-            ("SDF files", "*.sdf")
+            ("SDF files", "*.sdf"),
+            ("TXT files", "*.txt")
         ]
     )
+
     if file_path:
         file_entry.delete(0, tk.END)
         file_entry.insert(0, file_path)
+
+        file_extension = os.path.splitext(file_path)[1].lower()
+
+        # If JSON file is selected, try to auto-load function
+        if file_extension == ".json":
+            extracted_function = extract_function_from_json_file(file_path)
+            if extracted_function:
+                function_entry.delete("1.0", tk.END)
+                function_entry.insert("1.0", extracted_function)
+
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, "Function loaded automatically from JSON file.\n")
+            else:
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, "No 'Function' field found in the selected JSON file.\n")
+                
 
 def clean_fit_results(fit_results):
     # Replace '| ' with a tab to clean up the data for Excel pasting
@@ -383,6 +488,9 @@ def list_functions():
     try:
         # URL for the /list endpoint
         url = "http://192.92.147.107:8142/list"
+        url = url_entry.get()
+        url = url.replace("fit" , "list")
+
 
         # Headers to match the curl request
         headers = {
@@ -644,7 +752,7 @@ urls = functions_data["urls"]
 
 # Create the main application window
 root = tk.Tk()
-root.title("OneFit Interface")
+root.title("Graphical user interface of the PyOFE–OneFit framework")
 root.geometry("1100x580")
 
 # Styling
